@@ -5,22 +5,30 @@ import (
 	"illuminati/go/microservice/utils"
 	"log"
 	"net/http"
-
+	"os"
 	"golang.org/x/sync/errgroup"
 )
 
-type LetterService struct {
-	emailSender utils.EmailSender
+type participants struct {
+	Participants []string `json:"participants"`
 }
 
-func NewLetterService(emailSender utils.EmailSender) *LetterService {
+type LetterService struct {
+	emailSender utils.EmailSender
+	participantsURL string
+}
+
+
+func NewLetterService(emailSender utils.EmailSender, participantsURL string) *LetterService {
 	return &LetterService{
 		emailSender: emailSender,
+		participantsURL : participantsURL,
 	}
 }
 
 var(
-	ls = NewLetterService(utils.GetInstance())
+	participants_url = os.Getenv("PARTICIPANTS_URL")
+	ls = NewLetterService(utils.GetInstance(), participants_url)
 )
 
 type Letter struct {
@@ -28,11 +36,27 @@ type Letter struct {
 	Text         string   `json:"text"`
 	TargetEmails []string `json:"target_emails"`
 }
+func (ls *LetterService)getAppParticipants() ([]string, error) {
+
+	resp, err := http.Get(ls.participantsURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	
+	var data participants
+	json.NewDecoder(resp.Body).Decode(&data)
+
+	return data.Participants, nil
+}
 
 func (ls *LetterService) SendLetterEmail(request *http.Request) error {
 	var g errgroup.Group
 	var letter Letter
-	err := json.NewDecoder(request.Body).Decode(&letter)
+	var participants []string
+	log.Print("participants url : ", ls.participantsURL)
+	participants, err := ls.getAppParticipants()
+	err = json.NewDecoder(request.Body).Decode(&letter)
 	if err != nil {
 		log.Println("Something went wrong while parsing the request body...")
 		return err
@@ -40,7 +64,7 @@ func (ls *LetterService) SendLetterEmail(request *http.Request) error {
 
     g.Go(
 		func() error {
-		err = ls.emailSender.SendEmail(letter.Topic, letter.Text, letter.TargetEmails)
+		err = ls.emailSender.SendEmail(letter.Topic, letter.Text, participants)
 		return err
 		},
 	)
